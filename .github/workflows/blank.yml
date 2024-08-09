@@ -1,0 +1,104 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: self-hosted
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Checkout 
+        uses: actions/checkout@v4.1.1
+        
+      - name: Setup JDK 17
+        uses: actions/setup-java@v3
+        with:
+         java-version: 17
+         distribution: temurin
+        
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Get Latest Pull Request Description
+        id: pr-description
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_FOR_GH }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_run') {
+            $repo = $env:GITHUB_REPOSITORY
+            $token = $env:GITHUB_TOKEN
+            $commitSha = & git rev-parse HEAD
+            Write-Host "Commit SHA: $commitSha"
+            $prInfoUrl = "https://api.github.com/repos/$repo/commits/$commitSha/pulls"
+            $prInfoResponse = Invoke-RestMethod -Uri $prInfoUrl -Headers @{ Authorization = "token $token" }
+            # Extract the pull request number from the JSON response
+            $prNumber = ($prInfoResponse | Select-Object -First 1).number
+            # Debugging: Show the extracted pull request number
+            Write-Host "Extracted PR Number: $prNumber"
+            if (-not $prNumber) {
+              Write-Host "No pull request found for this commit."
+              "description<<EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+              "No description found." | Out-File -FilePath $env:GITHUB_ENV -Append
+              "EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+            } else {
+              # Fetch the pull request details using the extracted number
+              $prDetailsUrl = "https://api.github.com/repos/$repo/pulls/$prNumber"
+              $prDetailsResponse = Invoke-RestMethod -Uri $prDetailsUrl -Headers @{ Authorization = "token $token" }
+              # Extract the pull request description (body)
+              $description = $prDetailsResponse.body -replace '\\"', '"'
+              Write-Host "Extracted Description:"
+              Write-Host $description
+              # Check if the description is found
+              if (-not $description -or $description -eq "null") {
+                Write-Host "No description found for the pull request."
+                "description<<EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+                "No description found." | Out-File -FilePath $env:GITHUB_ENV -Append
+                "EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+              } else {
+                # Write the multiline description using a multiline block syntax
+                "description<<EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+                $description | Out-File -FilePath $env:GITHUB_ENV -Append
+                "EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+              }
+            }
+          } else {
+            $description = "Triggered manually with the Whitelabels"
+            "description<<EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+            $description | Out-File -FilePath $env:GITHUB_ENV -Append
+            "EOF" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+        shell: pwsh
+
+      - name: Build APK
+        run: |
+          echo "Build your APK here"
+          echo "For example, using Gradle or another build tool"
+
+      - name: Upload artifact to Firebase App Distribution
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_CI_TOKEN }}
+        run: |
+          $description = $env:description
+          if (-not $description) {
+              $description = "No PR description available."
+          }
+          $currentBranch = $env:GITHUB_REF_NAME
+          if ($currentBranch -eq "staging") {
+              $description = "Staging: $description"
+          }
+          # Replace newlines with `\n` for Firebase CLI compatibility
+          $description = $description -replace "`n", "\n" -replace "`r", ""
+          # Write the modified description to the console for debugging
+          Write-Host "Final Description: $description"
