@@ -102,3 +102,5 @@ jobs:
           $description = $description -replace "`n", "\n" -replace "`r", ""
           # Write the modified description to the console for debugging
           Write-Host "Final Description: $description"
+        shell:
+          pwsh
